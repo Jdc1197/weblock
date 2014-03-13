@@ -22,47 +22,172 @@
 #include <fstream>
 #include <string>
 #include <string.h>
+#include <assert.h>
+#include <vector>
 
 #define HOSTS_DIR "C:\\Windows\\System32\\drivers\\etc\\hosts"
 #define VERSION 1
-#define SUBVERSION 1
+#define SUBVERSION 2
+
 
 using namespace std;
 
+const char* keywordfilepath = "keywords";	// file path to keywords file
+
+enum class ProgramFunction { PrintVersion, PrintUsage, RegisterKeyword, LoadHostfile, Error};
+
+struct KeywordPair { string keyword, path; };
+typedef vector<KeywordPair> KeywordList;
+
+KeywordList loadKeywordList(const char* filename)
+{
+	ifstream infile(filename);
+	if (infile.is_open())
+	{
+		KeywordList list;
+		string line;
+		while (getline(infile, line))
+		{
+			bool setkeyword = true;	// for parsing
+			string keyword, path;
+			for (unsigned int i = 0; i < line.length(); i++)
+			{
+				if (line[i] == ';' && setkeyword == true)
+					setkeyword = false;
+				else if (setkeyword == true)
+					keyword += line[i];
+				else
+					path += line[i];
+			}
+			KeywordPair pair;
+			pair.keyword = keyword;
+			pair.path = path;
+			list.push_back(pair);
+		}
+		return list;
+	}
+	else
+	{
+		cout << "Could not open keyword file " << filename << endl;
+	}
+}
+
+void saveKeywordList(KeywordList list, const char * filename)
+{
+	ofstream ofile(filename);
+	if (ofile.is_open())
+	{
+		for (unsigned int i = 0; i < list.size(); i++)
+		{
+			ofile << list[i].keyword << ";" << list[i].path << endl;
+		}
+	}
+}
+
+void registerKeyword(const char* keyword, const char* filepath,  const char* keywordfilename)
+{
+	KeywordList list = loadKeywordList(keywordfilename);
+	KeywordPair pair;
+	pair.keyword = keyword;
+	pair.path = filepath;
+	list.push_back(pair);
+	saveKeywordList(list, keywordfilename);
+}
+
+struct ParsedArguments
+{
+	ProgramFunction function;
+	
+	// for ProgramFunction::LoadHostfile
+	char * hostfileToLoad;	// this could be either a file path or a keyword
+	
+	// for ProgarmFunction::RegisterKeyword
+	char * keywordName;
+	char * fileName;
+};
+
+void copyFile(const char * src_filename, const char * dst_filename)
+{
+	ifstream src(src_filename, ios::binary);
+	assert(src.is_open()); // assert that the file does exist
+	ofstream dst(dst_filename, ios::binary);
+	dst << src.rdbuf();
+}
+
 void printUsage()
 {
-	cout << "Usage:\n\tweblock [block|unblock]";
+	cout << "Usage:\n\tweblock ([hostfile to load]|[registered hostfile])" << endl;
+	cout << "\t\t-r, --register [register name] [hostfile to register]\n\t\t\t Binds a keyword to a loadable hostfile" << endl;
+	cout << "\n\t\t-v, --version\n\t\t\t Prints version and liscense information" << endl;
 }
 
 void printVersion()
 {
 	cout << "weblock v" << VERSION << "." << SUBVERSION << " (built " << __DATE__ << ", at "<< __TIME__ << ")" << endl;
 	cout << "Licensed under the GNU GPL v3.0" << endl;
-	cout << "See the included file gpl-3.0.txt or see <http://www.gnu.org/licenses/>";
+	cout << "See the included file gpl-3.0.txt or go to <http://www.gnu.org/licenses/>";
+}
+
+ParsedArguments parseArguments(int argc, char* argv[])
+{
+	ParsedArguments arg;
+	assert(argc > 0);	// At least one argument is passed by default
+	if (argc == 1)		// If no items besides the default were passed, print the usage
+	{
+		arg.function = ProgramFunction::PrintUsage;
+		return arg;
+	}
+	
+	for (int i = 1; i < argc; i++)
+	{
+		if (strcmp(argv[i], "-v") == 0)
+		{
+			arg.function = ProgramFunction::PrintVersion;
+			return arg;
+		}
+		else if ((strcmp(argv[i], "-r") == 0) || (strcmp(argv[i], "--register") == 0))
+		{
+			if (i+3 == argc)		// if there are ONLY 2 more arguments past this one
+			{
+				arg.function = ProgramFunction::RegisterKeyword;
+				arg.keywordName = argv[i+1];
+				arg.fileName = argv[i+2];
+				return arg;
+			}
+		}
+		else
+		{
+			arg.function = ProgramFunction::LoadHostfile;
+			arg.hostfileToLoad = argv[i];
+			return arg;
+		}
+		
+		
+	}
 }
 
 int main(int argc, char* argv[])
 {
-	if (argc == 2)
-	{	
-		ofstream ofile(HOSTS_DIR);
-		if ((strcmp(argv[1], "block") == 0) || (strcmp(argv[1], "lock") == 0))	// Program also accepts "lock" and "unlock"
-		{
-			string str = "127.0.0.1 63.235.20.187\n127.0.0.1 69.172.201.127\n127.0.0.1 www.reddit.com\n";
-			ofile << str;
-			ofile.close();
-		}
-		else if ((strcmp(argv[1], "unblock") == 0) || (strcmp(argv[1], "unlock") == 0))
-		{
-			string str = "127.0.0.1 63.235.20.187\n127.0.0.1 69.172.201.127\n";
-			ofile << str;
-			ofile.close();	
-		}
-		else if ((strcmp(argv[1], "-v") == 0) || (strcmp(argv[1], "--version") == 0))
-			printVersion();
-		else
-			printUsage();
-	}
-	else
+	saveKeywordList(loadKeywordList("keywords"), "keywords2");
+	ParsedArguments arg = parseArguments(argc, argv);
+	if (arg.function == ProgramFunction::PrintUsage)
 		printUsage();
+	else if (arg.function == ProgramFunction::PrintVersion)
+		printVersion();
+	else if (arg.function == ProgramFunction::RegisterKeyword)
+		registerKeyword(arg.keywordName, arg.fileName, keywordfilepath);
+	else if (arg.function == ProgramFunction::LoadHostfile)
+	{
+		KeywordList list = loadKeywordList(keywordfilepath);
+		for (unsigned int i = 0; i < list.size(); i++)
+		{
+			if (list[i].keyword == arg.hostfileToLoad)
+			{
+				copyFile(list[i].path.c_str(), HOSTS_DIR);
+				return 0;
+			}
+		}
+		// if the program reaches this point, then a keyword was NOT passed
+		copyFile(arg.hostfileToLoad, HOSTS_DIR);
+	}
 }
